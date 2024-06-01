@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Results</title>
+</head>
+<body>
+    <h1>Website Analysis Results</h1>
+    <ul>
+        {% for result in results %}
+        <li>
+            <strong>URL:</strong> {{ result.URL }}<br>
+            <strong>Status Code:</strong> {{ result.status_code }}<br>
+            <strong>IP Address:</strong> {{ result.ip_address }}<br>
+            <strong>Open Ports:</strong> {{ result.open_ports }}<br>
+            {% for key, value in result.whois_info.items() %}
+            <strong>{{ key }}:</strong> {{ value }}<br>
+            {% endfor %}
+        </li>
+        {% endfor %}
+    </ul>
+</body>
+</html>
