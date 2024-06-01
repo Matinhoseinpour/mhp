@@ -8,13 +8,18 @@ import whois
 import argparse
 import re
 
+# Initialize sets and dictionary to keep track of links
 links1 = set()
 links2 = set()
 links = {}
 
+# List of domains to exclude (e.g., social media)
+exclude_domains = ["twitter.com", "facebook.com", "instagram.com", "youtube.com", "t.me"]
+
+# Function to check sitemap status and collect links
 def sitemap_status(user_url: str):
     try:
-        response = requests.get(user_url)
+        response = requests.get(user_url, timeout=10)
         response.raise_for_status()
         html_content = response.content
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -22,13 +27,14 @@ def sitemap_status(user_url: str):
         for link in soup.find_all('a', href=True):
             href = link.get('href')
             full = urljoin(user_url, href)
-            if full.startswith('http') and full not in links1:
+            domain = urlparse(full).netloc
+            if full.startswith('http') and full not in links1 and domain not in exclude_domains:
                 links1.add(full)
                 links[full] = 1
 
         for link in links1:
             try:
-                response = requests.get(link)
+                response = requests.get(link, timeout=10)
                 response.raise_for_status()
                 html_content = response.content
                 soup = BeautifulSoup(html_content, 'html.parser')
@@ -36,7 +42,8 @@ def sitemap_status(user_url: str):
                 for sublink in soup.find_all('a', href=True):
                     href = sublink.get('href')
                     full = urljoin(link, href)
-                    if full.startswith('http') and full not in links2:
+                    domain = urlparse(full).netloc
+                    if full.startswith('http') and full not in links2 and domain not in exclude_domains:
                         links2.add(full)
                         links[full] = 2
 
@@ -52,17 +59,20 @@ def sitemap_status(user_url: str):
             
     return links2
 
+# Function to get status code and title of a URL
 def status_code_and_title(url: str):
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
-        title = BeautifulSoup(response.content, 'html.parser').title.string.strip()
+        soup = BeautifulSoup(response.content, 'html.parser')
+        title = soup.title.string.strip() if soup.title else 'No title found'
         status = response.status_code
         return status, title
     except requests.exceptions.RequestException as e:
         print(f"Error fetching status code for {url}: {e}")
         return None, None
 
+# Function to find subdomains
 def sub_domain(domain: str):
     data = []
     for subdomain in subs:
@@ -70,12 +80,13 @@ def sub_domain(domain: str):
             answers = dns.resolver.resolve(f"{subdomain}.{domain}", "A")
             for ip in answers:
                 data.append(f"{subdomain}.{domain}")
-        except dns.resolver.NoAnswer:
+        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
             pass
         except Exception as e:
-            data.append(f"Error in processing the subdomain: {e}")
+            print(f"Error in processing the subdomain: {e}")
     return data
 
+# Function to get IP address of a domain
 def get_ip(domain: str):
     try:
         ip_address = socket.gethostbyname(domain)
@@ -84,6 +95,7 @@ def get_ip(domain: str):
         print(f"Error processing IP for {domain}: {e}")
         return None
 
+# Function to scan common ports
 def scan_ports(ip):
     common_ports = [21, 22, 23, 25, 53, 80, 110, 119, 123, 143, 161, 194, 443, 445, 993, 995]
     open_ports = []
@@ -98,6 +110,7 @@ def scan_ports(ip):
         print(f"Error in process of ports for {ip}: {e}")
     return open_ports
 
+# Function to get WHOIS information
 def get_whois_info(domain):
     try:
         w = whois.whois(domain)
@@ -118,11 +131,13 @@ def get_whois_info(domain):
         print(f"Error fetching WHOIS info for {domain}: {e}")
         return {}
 
+# Function to find emails and phones in content
 def find_emails_and_phones(content):
     emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", content)
     phones = re.findall(r"\+?\d[\d -]{8,}\d", content)
     return emails, phones
 
+# Main function to run the process
 def main():
     with open('subdomains_http_code_title.txt', 'w', encoding='utf-8') as file1, \
          open('subdomains_ip.txt', 'w', encoding='utf-8') as file2, \
@@ -145,12 +160,16 @@ def main():
                     if open_ports:
                         file3.write(f"{ip_address} - Open Ports: {', '.join(map(str, open_ports))}\n")
             
-            response = requests.get(link)
-            emails, phones = find_emails_and_phones(response.text)
-            if emails:
-                file4.write(f"Emails found in {link}: {', '.join(emails)}\n")
-            if phones:
-                file4.write(f"Phones found in {link}: {', '.join(phones)}\n")
+            try:
+                response = requests.get(link, timeout=10)
+                response.raise_for_status()
+                emails, phones = find_emails_and_phones(response.text)
+                if emails:
+                    file4.write(f"Emails found in {link}: {', '.join(emails)}\n")
+                if phones:
+                    file4.write(f"Phones found in {link}: {', '.join(phones)}\n")
+            except requests.exceptions.RequestException as e:
+                print(f"Error fetching content from {link}: {e}")
             
             whois_info = get_whois_info(domain)
             for key, value in whois_info.items():
