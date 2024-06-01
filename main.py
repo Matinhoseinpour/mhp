@@ -6,17 +6,11 @@ import tldextract
 import socket
 import whois
 import argparse
-from jinja2 import Template
+import re
 
 links1 = set()
 links2 = set()
 links = {}
-
-# Argument parser
-parser = argparse.ArgumentParser(description='Crawl websites and collect information.')
-parser.add_argument('urls', help='Two URLs of the websites to crawl')
-parser.add_argument('-d', '--depth', type=int, default=2, help='Depth of crawling (default: 2)')
-args = parser.parse_args()
 
 def sitemap_status(user_url: str):
     try:
@@ -51,17 +45,23 @@ def sitemap_status(user_url: str):
 
     except requests.exceptions.RequestException as e:
         print(f"Error in receiving information from the user_url: {e}")
-
+        
+    with open('links.txt', "w", encoding='utf-8') as file:
+        for link, depth in links.items():
+            file.write(f"{link} at depth {depth} \n")
+            
     return links2
 
-def status_code(url: str):
+def status_code_and_title(url: str):
     try:
         response = requests.get(url)
         response.raise_for_status()
-        return response.status_code
+        title = BeautifulSoup(response.content, 'html.parser').title.string.strip()
+        status = response.status_code
+        return status, title
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching status code: {e}")
-        return None
+        print(f"Error fetching status code for {url}: {e}")
+        return None, None
 
 def sub_domain(domain: str):
     data = []
@@ -69,7 +69,7 @@ def sub_domain(domain: str):
         try:
             answers = dns.resolver.resolve(f"{subdomain}.{domain}", "A")
             for ip in answers:
-                data.append(f"https://{subdomain}.{domain}")
+                data.append(f"{subdomain}.{domain}")
         except dns.resolver.NoAnswer:
             pass
         except Exception as e:
@@ -81,7 +81,7 @@ def get_ip(domain: str):
         ip_address = socket.gethostbyname(domain)
         return ip_address
     except socket.gaierror as e:
-        print("Error processing IP!")
+        print(f"Error processing IP for {domain}: {e}")
         return None
 
 def scan_ports(ip):
@@ -90,12 +90,12 @@ def scan_ports(ip):
     try:
         for port in common_ports:  
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(1)  # Set timeout to 1 second
+                sock.settimeout(1)
                 result = sock.connect_ex((ip, port))
                 if result == 0:
                     open_ports.append(port)
     except Exception as e:
-        print(f"Error in process of ports: {e}")
+        print(f"Error in process of ports for {ip}: {e}")
     return open_ports
 
 def get_whois_info(domain):
@@ -118,37 +118,57 @@ def get_whois_info(domain):
         print(f"Error fetching WHOIS info for {domain}: {e}")
         return {}
 
+def find_emails_and_phones(content):
+    emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", content)
+    phones = re.findall(r"\+?\d[\d -]{8,}\d", content)
+    return emails, phones
+
 def main():
-    link_data = []
-    for link in links2:
-        domain = urlparse(link).netloc
-        extracted = tldextract.extract(domain)
-        subdomains = sub_domain(f"{extracted.domain}.{extracted.suffix}")
-        ip_address = get_ip(domain)
-        open_ports = scan_ports(ip_address) if ip_address else []
-        whois_info = get_whois_info(domain)
-
-        link_info = {
-            "URL": link,
-            "status_code": status_code(link),
-            "ip_address": ip_address,
-            "open_ports": open_ports,
-            "whois_info": whois_info
-        }
-        link_data.append(link_info)
-    
-    with open('matin.html', 'r') as file:
-        template = Template(file.read())
-
-    html_content = template.render(results=link_data)
-
-    with open('matin.html', 'w') as file:
-        file.write(html_content)
+    with open('subdomains_http_code_title.txt', 'w', encoding='utf-8') as file1, \
+         open('subdomains_ip.txt', 'w', encoding='utf-8') as file2, \
+         open('ip_open_ports.txt', 'w', encoding='utf-8') as file3, \
+         open('emails_phones.txt', 'w', encoding='utf-8') as file4:
+        
+        for link in links2:
+            domain = urlparse(link).netloc
+            extracted = tldextract.extract(domain)
+            subdomains = sub_domain(f"{extracted.domain}.{extracted.suffix}")
+            for sub in subdomains:
+                status, title = status_code_and_title(f"https://{sub}")
+                if status and title:
+                    file1.write(f"{sub} - HTTP {status} - Title: {title}\n")
+                
+                ip_address = get_ip(sub)
+                if ip_address:
+                    file2.write(f"{sub} - IP: {ip_address}\n")
+                    open_ports = scan_ports(ip_address)
+                    if open_ports:
+                        file3.write(f"{ip_address} - Open Ports: {', '.join(map(str, open_ports))}\n")
+            
+            response = requests.get(link)
+            emails, phones = find_emails_and_phones(response.text)
+            if emails:
+                file4.write(f"Emails found in {link}: {', '.join(emails)}\n")
+            if phones:
+                file4.write(f"Phones found in {link}: {', '.join(phones)}\n")
+            
+            whois_info = get_whois_info(domain)
+            for key, value in whois_info.items():
+                file4.write(f"{key}: {value}\n")
 
 if __name__ == "__main__":
     # Load subdomains from the file
     with open("subdomains.txt", "r") as file:
         subs = file.read().splitlines()
-
-    print(sitemap_status(args.urls))
+    
+    # Argument parser setup
+    parser = argparse.ArgumentParser(description='Crawl websites and collect information.')
+    parser.add_argument('urls', nargs='+', help='URLs of the websites to crawl')
+    parser.add_argument('-d', '--depth', type=int, default=2, help='Depth of crawling (default: 2)')
+    args = parser.parse_args()
+    
+    for url in args.urls:
+        print(f"Processing URL: {url}")
+        sitemap_status(url)
+    
     main()
